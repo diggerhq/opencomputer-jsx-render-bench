@@ -1,19 +1,11 @@
 /**
- * JSX Render Benchmark — OpenComputer
+ * SSR Render Benchmark — OpenComputer
  *
- * Measures end-to-end time to render a React dashboard component inside
- * an OpenComputer sandbox, across three sandbox sizes (CPU/memory).
+ * Renders a React dashboard via esbuild + renderToString inside
+ * OpenComputer sandboxes, across three sizes.
  *
- * Pipeline per run:
- *   1. Sandbox creation (VM boot)
- *   2. npm install react, react-dom, esbuild  (cold start only)
- *   3. Upload JSX + render harness
- *   4. esbuild bundles JSX
- *   5. react-dom/server renderToString produces HTML
- *
- * Two modes:
- *   - Cold start: fresh sandbox, deps installed from scratch
- *   - Warm start: sandbox with deps already installed, only write + bundle + render
+ * Cold start: boot -> npm install -> write JSX -> bundle -> render
+ * Warm start: boot -> install (untimed) -> write JSX -> bundle -> render
  *
  * Usage:
  *   npm run bench
@@ -30,40 +22,28 @@ const RENDER_SCRIPT = readFileSync(join(__dirname, "fixtures", "render.cjs"), "u
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function bold(msg: string) { console.log(`\x1b[1m${msg}\x1b[0m`); }
-function dim(msg: string) { console.log(`\x1b[2m  ${msg}\x1b[0m`); }
-function green(msg: string) { console.log(`\x1b[32m${msg}\x1b[0m`); }
-function red(msg: string) { console.log(`\x1b[31m${msg}\x1b[0m`); }
+const bold  = (s: string) => console.log(`\x1b[1m${s}\x1b[0m`);
+const dim   = (s: string) => console.log(`\x1b[2m  ${s}\x1b[0m`);
+const green = (s: string) => console.log(`\x1b[32m${s}\x1b[0m`);
+const red   = (s: string) => console.log(`\x1b[31m${s}\x1b[0m`);
 
-function formatMs(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(2)}s`;
-}
+const fmt = (ms: number) => ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(2)}s`;
 
 async function timed<T>(fn: () => Promise<T>): Promise<{ result: T; ms: number }> {
-  const start = Date.now();
+  const t = Date.now();
   const result = await fn();
-  return { result, ms: Date.now() - start };
-}
-
-interface PhaseResult {
-  sandbox_create: number;
-  npm_install: number;
-  write_jsx: number;
-  bundle: number;
-  render: number;
-  total: number;
+  return { result, ms: Date.now() - t };
 }
 
 // ── Sandbox Sizes ────────────────────────────────────────────────────────────
 
-const SANDBOX_SIZES = [
-  { name: "Small  (1 CPU / 4GB)",    cpuCount: 1,  memoryMB: 4096 },
-  { name: "Medium (4 CPU / 16GB)",   cpuCount: 4,  memoryMB: 16384 },
-  { name: "Large  (16 CPU / 64GB)",  cpuCount: 16, memoryMB: 65536 },
+const SIZES = [
+  { label: "1 CPU / 4 GB",   cpuCount: 1,  memoryMB: 4096 },
+  { label: "4 CPU / 16 GB",  cpuCount: 4,  memoryMB: 16384 },
+  { label: "16 CPU / 64 GB", cpuCount: 16, memoryMB: 65536 },
 ];
 
-// ── Benchmark Runner ─────────────────────────────────────────────────────────
+// ── Phases ───────────────────────────────────────────────────────────────────
 
 async function installDeps(sandbox: Sandbox): Promise<number> {
   const { ms } = await timed(async () => {
@@ -76,17 +56,14 @@ async function installDeps(sandbox: Sandbox): Promise<number> {
   return ms;
 }
 
-async function runRender(sandbox: Sandbox): Promise<{ writeMs: number; bundleMs: number; renderMs: number }> {
+async function renderJsx(sandbox: Sandbox): Promise<{ writeMs: number; bundleMs: number; renderMs: number }> {
   const { ms: writeMs } = await timed(async () => {
     await sandbox.files.write("/workspace/Component.jsx", FIXTURE_JSX);
     await sandbox.files.write("/workspace/render.cjs", RENDER_SCRIPT);
   });
 
   const { result } = await timed(async () => {
-    const r = await sandbox.exec.run("node /workspace/render.cjs", {
-      cwd: "/workspace",
-      timeout: 30,
-    });
+    const r = await sandbox.exec.run("node /workspace/render.cjs", { cwd: "/workspace", timeout: 30 });
     if (r.exitCode !== 0) throw new Error(`Render failed:\n${r.stdout}\n${r.stderr}`);
     return JSON.parse(r.stdout.trim());
   });
@@ -94,156 +71,120 @@ async function runRender(sandbox: Sandbox): Promise<{ writeMs: number; bundleMs:
   return { writeMs, bundleMs: result.bundleMs, renderMs: result.renderMs };
 }
 
-// ── Table Printer ────────────────────────────────────────────────────────────
+// ── Table ────────────────────────────────────────────────────────────────────
 
-function printResults(label: string, results: Array<{ size: string; phases: PhaseResult }>) {
-  const colW = { size: 24, create: 10, install: 12, write: 8, bundle: 8, render: 8, total: 10 };
+interface Row { label: string; cols: (string | null)[] }
+
+function printTable(title: string, headers: string[], rows: Row[]) {
+  const W = 12;
+  const labelW = Math.max(16, ...rows.map(r => r.label.length)) + 2;
 
   console.log();
-  bold(`  ${label}`);
-  const header = [
-    "Sandbox Size".padEnd(colW.size),
-    "VM Boot".padStart(colW.create),
-    "npm install".padStart(colW.install),
-    "Write".padStart(colW.write),
-    "Bundle".padStart(colW.bundle),
-    "Render".padStart(colW.render),
-    "TOTAL".padStart(colW.total),
-  ].join("  ");
-  bold(`  ${"─".repeat(header.length)}`);
-  bold(`  ${header}`);
-  bold(`  ${"─".repeat(header.length)}`);
-
-  for (const r of results) {
-    const row = [
-      r.size.padEnd(colW.size),
-      formatMs(r.phases.sandbox_create).padStart(colW.create),
-      (r.phases.npm_install ? formatMs(r.phases.npm_install) : "—").padStart(colW.install),
-      formatMs(r.phases.write_jsx).padStart(colW.write),
-      formatMs(r.phases.bundle).padStart(colW.bundle),
-      formatMs(r.phases.render).padStart(colW.render),
-      formatMs(r.phases.total).padStart(colW.total),
-    ].join("  ");
-    console.log(`  ${row}`);
+  bold(`  ${title}`);
+  const hdr = "  " + "".padEnd(labelW) + headers.map(h => h.padStart(W)).join("");
+  const sep = "  " + "─".repeat(labelW + headers.length * W);
+  bold(sep);
+  bold(hdr);
+  bold(sep);
+  for (const r of rows) {
+    const line = "  " + r.label.padEnd(labelW) + r.cols.map(c => (c ?? "—").padStart(W)).join("");
+    console.log(line);
   }
-  bold(`  ${"─".repeat(header.length)}`);
+  bold(sep);
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  bold("\n╔═══════════════════════════════════════════════════════════╗");
-  bold("║           JSX Render Benchmark — OpenComputer              ║");
-  bold("╚═══════════════════════════════════════════════════════════╝\n");
+  bold("\n┌─────────────────────────────────────────────────────────┐");
+  bold("│          SSR Render Benchmark — OpenComputer            │");
+  bold("└─────────────────────────────────────────────────────────┘\n");
 
-  dim("Fixture: Dashboard component (sidebar, stat cards, 20-row table, activity feed)");
-  dim("Pipeline: sandbox boot -> npm install -> esbuild bundle -> React SSR renderToString");
+  dim("Fixture:   Dashboard (sidebar, stat cards, 20-row table, activity feed)");
+  dim("Pipeline:  boot -> npm install -> esbuild bundle -> renderToString");
   console.log();
 
   const sandboxes: Sandbox[] = [];
 
   try {
-    // ── Cold Start ───────────────────────────────────────────────────
-    bold("━━━ Cold Start (fresh sandbox, install deps from scratch) ━━━\n");
+    // ── Cold Start ──────────────────────────────────────────────────
+    bold("── Cold Start (fresh sandbox) ──\n");
 
-    const coldResults: Array<{ size: string; phases: PhaseResult }> = [];
+    const coldRows: Row[] = [];
 
-    for (const size of SANDBOX_SIZES) {
-      dim(`${size.name}...`);
-      const totalStart = Date.now();
+    for (const size of SIZES) {
+      dim(`${size.label}...`);
+      const t0 = Date.now();
 
-      const { result: sandbox, ms: createMs } = await timed(() =>
-        Sandbox.create({
-          template: "base",
-          timeout: 300,
-          cpuCount: size.cpuCount,
-          memoryMB: size.memoryMB,
-        }),
+      const { result: sb, ms: bootMs } = await timed(() =>
+        Sandbox.create({ template: "base", timeout: 300, cpuCount: size.cpuCount, memoryMB: size.memoryMB }),
       );
-      sandboxes.push(sandbox);
-      dim(`  sandbox ${sandbox.sandboxId} booted in ${formatMs(createMs)}`);
+      sandboxes.push(sb);
+      dim(`  ${sb.sandboxId} booted in ${fmt(bootMs)}`);
 
-      const installMs = await installDeps(sandbox);
-      const { writeMs, bundleMs, renderMs } = await runRender(sandbox);
-      const total = Date.now() - totalStart;
+      const installMs = await installDeps(sb);
+      const { writeMs, bundleMs, renderMs } = await renderJsx(sb);
+      const total = Date.now() - t0;
 
-      dim(`  total: ${formatMs(total)} (boot=${formatMs(createMs)}, install=${formatMs(installMs)}, bundle=${formatMs(bundleMs)}, render=${formatMs(renderMs)})`);
-      coldResults.push({
-        size: size.name,
-        phases: { sandbox_create: createMs, npm_install: installMs, write_jsx: writeMs, bundle: bundleMs, render: renderMs, total },
+      dim(`  done: ${fmt(total)}`);
+      coldRows.push({
+        label: size.label,
+        cols: [fmt(bootMs), fmt(installMs), fmt(writeMs), fmt(bundleMs), fmt(renderMs), fmt(total)],
       });
 
-      await sandbox.kill().catch(() => {});
+      await sb.kill().catch(() => {});
     }
 
-    printResults("Cold Start Results", coldResults);
+    printTable("Cold Start", ["Boot", "Install", "Write", "Bundle", "Render", "TOTAL"], coldRows);
 
-    // ── Warm Start ───────────────────────────────────────────────────
-    // Simulates a pre-warmed sandbox: boot, install deps once, then
-    // measure only the write + bundle + render cycle.
-    bold("\n━━━ Warm Start (deps pre-installed, measure render only) ━━━\n");
+    // ── Warm Start ──────────────────────────────────────────────────
+    bold("\n── Warm Start (deps pre-installed, render only) ──\n");
 
-    const warmResults: Array<{ size: string; phases: PhaseResult }> = [];
+    const warmRows: Row[] = [];
 
-    for (const size of SANDBOX_SIZES) {
-      dim(`${size.name}...`);
+    for (const size of SIZES) {
+      dim(`${size.label}...`);
 
-      const { result: sandbox, ms: createMs } = await timed(() =>
-        Sandbox.create({
-          template: "base",
-          timeout: 300,
-          cpuCount: size.cpuCount,
-          memoryMB: size.memoryMB,
-        }),
+      const { result: sb, ms: bootMs } = await timed(() =>
+        Sandbox.create({ template: "base", timeout: 300, cpuCount: size.cpuCount, memoryMB: size.memoryMB }),
       );
-      sandboxes.push(sandbox);
-      dim(`  sandbox ${sandbox.sandboxId} booted in ${formatMs(createMs)}`);
+      sandboxes.push(sb);
+      dim(`  installing deps (setup, not timed)...`);
+      await installDeps(sb);
 
-      // Install deps (not timed — this is the "warm" baseline)
-      dim("  installing deps (one-time setup)...");
-      await installDeps(sandbox);
+      const t0 = Date.now();
+      const { writeMs, bundleMs, renderMs } = await renderJsx(sb);
+      const total = Date.now() - t0;
 
-      // Now measure only the render cycle
-      const totalStart = Date.now();
-      const { writeMs, bundleMs, renderMs } = await runRender(sandbox);
-      const total = Date.now() - totalStart;
-
-      dim(`  render cycle: ${formatMs(total)} (write=${formatMs(writeMs)}, bundle=${formatMs(bundleMs)}, render=${formatMs(renderMs)})`);
-      warmResults.push({
-        size: size.name,
-        phases: { sandbox_create: createMs, npm_install: 0, write_jsx: writeMs, bundle: bundleMs, render: renderMs, total },
+      dim(`  done: ${fmt(total)}`);
+      warmRows.push({
+        label: size.label,
+        cols: [fmt(bootMs), null, fmt(writeMs), fmt(bundleMs), fmt(renderMs), fmt(total)],
       });
 
-      await sandbox.kill().catch(() => {});
+      await sb.kill().catch(() => {});
     }
 
-    printResults("Warm Start Results (render cycle only)", warmResults);
+    printTable("Warm Start (render only)", ["Boot", "Install", "Write", "Bundle", "Render", "TOTAL"], warmRows);
 
-    // ── Summary ──────────────────────────────────────────────────────
+    // ── Summary ─────────────────────────────────────────────────────
     console.log();
-    bold("━━━ Summary ━━━\n");
-
-    const coldTotals = coldResults.map(r => r.phases.total);
-    const warmTotals = warmResults.map(r => r.phases.total);
-    green(`  Cold start (boot + install + render):  ${formatMs(Math.min(...coldTotals))} – ${formatMs(Math.max(...coldTotals))}`);
-    green(`  Warm start (render cycle only):        ${formatMs(Math.min(...warmTotals))} – ${formatMs(Math.max(...warmTotals))}`);
+    bold("── Summary ──\n");
+    const coldTotals = coldRows.map(r => parseInt(r.cols[5]!));
+    const warmTotals = warmRows.map(r => parseInt(r.cols[5]!));
+    green(`  Cold:  ${coldRows.map(r => r.cols[5]).join("  /  ")}`);
+    green(`  Warm:  ${warmRows.map(r => r.cols[5]).join("  /  ")}`);
     console.log();
 
   } catch (err: any) {
     red(`\nFatal: ${err.message}`);
     if (err.stack) dim(err.stack);
   } finally {
-    bold("━━━ Cleanup ━━━\n");
+    bold("── Cleanup ──\n");
     for (const sb of sandboxes) {
-      try {
-        await sb.kill();
-        dim(`Killed ${sb.sandboxId}`);
-      } catch { /* best effort */ }
+      try { await sb.kill(); dim(`Killed ${sb.sandboxId}`); } catch {}
     }
   }
 }
 
-main().catch((err) => {
-  console.error("Fatal:", err);
-  process.exit(1);
-});
+main().catch((err) => { console.error("Fatal:", err); process.exit(1); });
