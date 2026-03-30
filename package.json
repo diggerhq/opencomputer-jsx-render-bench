@@ -1,10 +1,11 @@
 {
   "name": "opencomputer-jsx-render-bench",
   "version": "1.0.0",
-  "description": "Benchmark: how fast can OpenComputer render JSX in a Firecracker sandbox?",
+  "description": "Benchmark: how fast can OpenComputer render JSX in a sandbox?",
   "type": "module",
   "scripts": {
-    "bench": "tsx src/bench.ts"
+    "bench": "tsx src/bench.ts",
+    "bench:nextjs": "tsx src/bench-nextjs.ts"
   },
   "dependencies": {
     "@opencomputer/sdk": "^0.5.12"

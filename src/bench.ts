@@ -1,11 +1,11 @@
 /**
- * JSX Render Benchmark — OpenComputer / Firecracker
+ * JSX Render Benchmark — OpenComputer
  *
  * Measures end-to-end time to render a React dashboard component inside
- * a Firecracker microVM, across three sandbox sizes (CPU/memory).
+ * an OpenComputer sandbox, across three sandbox sizes (CPU/memory).
  *
  * Pipeline per run:
- *   1. Sandbox creation (Firecracker VM boot)
+ *   1. Sandbox creation (VM boot)
  *   2. npm install react, react-dom, esbuild  (cold start only)
  *   3. Upload JSX + render harness
  *   4. esbuild bundles JSX
@@ -133,7 +133,7 @@ function printResults(label: string, results: Array<{ size: string; phases: Phas
 
 async function main() {
   bold("\n╔═══════════════════════════════════════════════════════════╗");
-  bold("║       JSX Render Benchmark — OpenComputer / Firecracker  ║");
+  bold("║           JSX Render Benchmark — OpenComputer              ║");
   bold("╚═══════════════════════════════════════════════════════════╝\n");
 
   dim("Fixture: Dashboard component (sidebar, stat cards, 20-row table, activity feed)");
