@@ -25,14 +25,6 @@ The bottleneck is `npm install` and network I/O. The actual bundle + render is ~
 
 Renders a React dashboard (sidebar, stat cards, 20-row data table, activity feed) using esbuild + `renderToString()`.
 
-**Cold start** — fresh sandbox, deps installed from scratch:
-
-| Size | Boot | Install | Bundle + Render | **Total** |
-|------|------|---------|-----------------|-----------|
-| 1 CPU / 4 GB | 869ms | 4.76s | 29ms | **6.17s** |
-| 4 CPU / 16 GB | 465ms | 4.67s | 32ms | **5.69s** |
-| 16 CPU / 64 GB | 465ms | 4.81s | 33ms | **5.98s** |
-
 **Warm start** — deps already installed, just write + bundle + render:
 
 | Size | **Total** |
@@ -40,6 +32,14 @@ Renders a React dashboard (sidebar, stat cards, 20-row data table, activity feed
 | 1 CPU / 4 GB | **344ms** |
 | 4 CPU / 16 GB | **532ms** |
 | 16 CPU / 64 GB | **696ms** |
+
+**Cold start** — fresh sandbox, deps installed from scratch:
+
+| Size | Boot | Install | Bundle + Render | **Total** |
+|------|------|---------|-----------------|-----------|
+| 1 CPU / 4 GB | 869ms | 4.76s | 29ms | **6.17s** |
+| 4 CPU / 16 GB | 465ms | 4.67s | 32ms | **5.69s** |
+| 16 CPU / 64 GB | 465ms | 4.81s | 33ms | **5.98s** |
 
 ## Benchmark 2: Next.js App
 
