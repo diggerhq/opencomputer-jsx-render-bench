@@ -1,6 +1,6 @@
 node_modules/
 dist/
 .next/
-.env
 package-lock.json
 next-env.d.ts
+config.bat
