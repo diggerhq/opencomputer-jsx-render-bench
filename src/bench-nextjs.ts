@@ -45,6 +45,9 @@ const SIZES = [
 
 async function nextStartAndWait(sandbox: Sandbox): Promise<number> {
   const { ms } = await timed(async () => {
+    // Kill any leftover server from the checkpoint
+    await sandbox.exec.run("pkill -f 'next start' 2>/dev/null; sleep 0.2", { timeout: 5 });
+
     await sandbox.exec.start("sh", {
       args: ["-c", "cd /workspace && npx next start -p 3000 2>&1"],
       onStdout: (data) => {

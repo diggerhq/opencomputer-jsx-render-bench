@@ -2,43 +2,42 @@
 
 How fast can [OpenComputer](https://opencomputer.dev) render JSX in a sandbox?
 
-This benchmark answers a common question for developers evaluating sandbox platforms: **"If I need to compile and render JSX inside an isolated sandbox (for embedding in an iframe), how long does it take end-to-end?"**
+## Results
 
-## Two benchmarks
+### SSR Render (esbuild + renderToString)
 
-### 1. SSR Render (`npm run bench`)
+Cold start — fresh sandbox, install deps from scratch:
 
-Renders a React dashboard component using esbuild + `renderToString()`. Fast, lightweight.
+| Size | Boot | Install | Write | Bundle | Render | **Total** |
+|------|------|---------|-------|--------|--------|-----------|
+| 1 CPU / 4 GB | 869ms | 4.76s | 389ms | 7ms | 22ms | **6.17s** |
+| 4 CPU / 16 GB | 465ms | 4.67s | 414ms | 9ms | 23ms | **5.69s** |
+| 16 CPU / 64 GB | 465ms | 4.81s | 518ms | 11ms | 22ms | **5.98s** |
 
-| Phase | What happens |
-|-------|-------------|
-| **VM Boot** | Sandbox spins up |
-| **npm install** | `react`, `react-dom`, `esbuild` installed (cold start only) |
-| **Write** | JSX + render harness uploaded to `/workspace/` |
-| **Bundle** | esbuild compiles JSX to a CJS bundle |
-| **Render** | `react-dom/server` `renderToString()` produces HTML |
+Warm start — deps pre-installed, render cycle only:
 
-Runs in cold start (full pipeline) and warm start (render cycle only) modes.
+| Size | Write | Bundle | Render | **Total** |
+|------|-------|--------|--------|-----------|
+| 1 CPU / 4 GB | 200ms | 6ms | 22ms | **344ms** |
+| 4 CPU / 16 GB | 385ms | 10ms | 22ms | **532ms** |
+| 16 CPU / 64 GB | 472ms | 8ms | 22ms | **696ms** |
 
-### 2. Next.js App (`npm run bench:nextjs`)
+### Next.js App (fork from checkpoint)
 
-Builds and serves a full Next.js calculator app — client components, state management, history panel. Measures time to first HTTP 200.
+Full Next.js calculator app — pre-built checkpoint with `npm install` + `next build` already done. Measures fork + `next start` to HTTP 200:
 
-| Phase | What happens |
-|-------|-------------|
-| **VM Boot** | Sandbox spins up |
-| **Upload** | Next.js app files written to `/workspace/` |
-| **npm install** | `next`, `react`, `react-dom` installed |
-| **next build** | Production build |
-| **Start** | `next start` + poll until HTTP 200 on port 3000 |
+| Size | Fork | Start | **Total** |
+|------|------|-------|-----------|
+| 1 CPU / 4 GB | 234ms | 2.23s | **2.46s** |
+| 4 CPU / 16 GB | 145ms | 2.19s | **2.33s** |
+| 16 CPU / 64 GB | 126ms | 2.31s | **2.43s** |
 
-### Sandbox sizes
+### Key takeaways
 
-| Size | CPU | Memory |
-|------|-----|--------|
-| Small | 1 | 4 GB |
-| Medium | 4 | 16 GB |
-| Large | 16 | 64 GB |
+- **SSR render in ~350ms** with a warm sandbox (deps already installed)
+- **Full Next.js app serving in ~2.4s** from a pre-built checkpoint
+- Sandbox boot is ~500ms, forking from checkpoint is ~150ms
+- Bundle + render time is negligible (~30ms) — the bottleneck is npm install and network I/O
 
 ## Setup
 
@@ -54,43 +53,41 @@ npm install
 ```bash
 source .env
 
-# SSR render benchmark
+# SSR render benchmark (cold + warm start, 3 sizes)
 npm run bench
 
-# Next.js app benchmark
+# Next.js app benchmark (fork from checkpoint, 3 sizes)
 npm run bench:nextjs
-```
 
-## Try the calculator locally
-
-```bash
-cd src/fixtures/nextjs-calculator
-npm install
-npm run dev
-# Open http://localhost:3000
+# Create a fresh checkpoint for the Next.js bench
+npm run setup
 ```
 
 ## Project structure
 
 ```
 src/
-├── bench.ts                          # SSR render benchmark
-├── bench-nextjs.ts                   # Next.js app benchmark
+├── bench.ts                  # SSR render benchmark
+├── bench-nextjs.ts           # Next.js app benchmark (from checkpoint)
+├── setup-checkpoint.ts       # Creates the pre-built checkpoint
 └── fixtures/
-    ├── Dashboard.jsx                 # React component for SSR bench
-    ├── render.cjs                    # esbuild + renderToString harness
-    └── nextjs-calculator/            # Full Next.js app for app bench
+    ├── Dashboard.jsx         # React dashboard for SSR bench
+    ├── render.cjs            # esbuild + renderToString harness (runs inside sandbox)
+    └── nextjs-calculator/    # Full Next.js calculator app
         ├── package.json
         ├── next.config.js
+        ├── tsconfig.json
         └── app/
             ├── layout.tsx
             ├── page.tsx
-            ├── Calculator.tsx        # Client component with state
-            └── History.tsx           # Calculation history panel
+            ├── Calculator.tsx
+            └── History.tsx
 ```
 
 ## How it works
 
-**SSR bench:** Creates a sandbox, uploads a JSX component and a render harness. The harness runs inside the VM: esbuild bundles the JSX, then `renderToString()` produces HTML. Bundle/render times are measured inside the VM for accuracy.
+**SSR bench** creates a sandbox, installs react + esbuild, uploads a JSX dashboard component, bundles it with esbuild, and renders to HTML via `renderToString()`. Bundle and render times are measured inside the sandbox for accuracy.
 
-**Next.js bench:** Creates a sandbox, uploads the full Next.js app, runs `npm install` + `next build` + `next start`, then polls `localhost:3000` until it gets an HTTP 200. This measures the realistic end-to-end time to have an interactive app running in a sandbox.
+**Next.js bench** forks a sandbox from a pre-built checkpoint that already has deps installed and a production build done. It starts the Next.js server and polls until HTTP 200. Run `npm run setup` to create the checkpoint.
+
+**Setup** boots a sandbox, uploads the calculator app, runs `npm install` + `next build`, and creates a checkpoint. Prints the checkpoint ID to plug into `bench-nextjs.ts`.
