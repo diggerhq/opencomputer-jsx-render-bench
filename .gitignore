@@ -3,3 +3,4 @@ dist/
 .next/
 .env
 package-lock.json
+next-env.d.ts
